@@ -1,45 +1,47 @@
-# Clawork Heartbeat — Prompt for Scheduled Task
+# Clawork Heartbeat — Scheduled Task Prompt
 
-Run the Clawork heartbeat cycle. Follow these steps in order:
+This is the prompt template for the Clawork heartbeat scheduled task.
+Configure it as a recurring task in your Cowork environment.
 
-## 1. Read Configuration
+## Recommended Schedule
 
-Read `~/claw/config.yaml` to determine which channels are active and the routing rules.
+- Every 15 minutes for active use
+- Every 30 minutes for low-traffic periods
+- Every 5 minutes for high-priority monitoring
 
-## 2. Check Active Channels
+## Prompt
 
-For each channel with `enabled: true`:
+```
+You are Clawork's heartbeat — the autonomous loop that keeps the personal agent running.
 
-- **WhatsApp** (`method: browser`): Invoke the `clawork-messenger` skill to read new messages from WhatsApp Web. For each new message, create a JSON ticket in `~/claw/inbox/`.
-- **Telegram** (`method: browser`): Same as WhatsApp but on Telegram Web.
-- **Slack** (`method: connector`): Use the Slack connector to read new messages.
-- **Gmail** (`method: connector`): Use the Gmail connector to read new emails in the configured labels.
+Every cycle:
 
-## 3. Process Inbox
+1. Check ~/claw/inbox/ for pending tickets (status: "pending")
+2. Sort by priority: critical > high > normal > low
+3. For each ticket (up to 10 per cycle):
+   a. Apply routing rules from ~/claw/config.yaml
+   b. Dispatch to the matched skill (or default clawork-soul)
+   c. Save the interaction to ~/claw/sessions/{channel}/{peer_id}.jsonl
+   d. Move completed ticket from inbox/ to outbox/
+4. Log the heartbeat to ~/claw/logs/heartbeat.jsonl
+5. Clean up outbox tickets older than 7 days
 
-Read all JSON files in `~/claw/inbox/` with `status: "pending"`. For each ticket:
-
-1. Invoke the `clawork-router` skill with the ticket as input
-2. The router decides which skill processes the ticket (based on config.yaml rules)
-3. Update ticket status to "processing"
-4. Execute the appropriate skill
-5. Write the result to `ticket.result`
-6. Send the response to the source channel (via `clawork-messenger` or connector)
-7. Update status to "done" and move to `~/claw/outbox/`
-
-## 4. Cleanup
-
-Move tickets with status "done" that are older than 24h to `~/claw/outbox/archive/`.
-
-## 5. Log
-
-Write a cycle summary to `~/claw/logs/heartbeat.jsonl`:
-```json
-{"ts": "ISO-8601", "tickets_processed": N, "tickets_created": N, "errors": N, "channels_checked": ["whatsapp", "gmail"]}
+If the inbox is empty, just log the heartbeat and exit.
+Never process more than 10 tickets in one cycle.
+Always process critical/high priority tickets first.
 ```
 
-## Limits
+## Setup with Cowork Scheduled Tasks
 
-- Do not process more than 10 tickets per cycle (configurable in `limits.max_tickets_per_heartbeat`)
-- Wait `limits.message_delay_seconds` between browser actions
-- If a ticket fails, mark as "error" and continue with the next one
+Use the `/schedule` command in Cowork to create the task:
+
+- **Task ID**: `clawork-heartbeat`
+- **Schedule**: `*/15 * * * *` (every 15 minutes)
+- **Prompt**: Copy the prompt above
+
+## First Run
+
+After creating the scheduled task, click "Run now" to:
+1. Verify the task works correctly
+2. Pre-approve any tool permissions it needs
+3. Check that logs are being written
