@@ -1,0 +1,36 @@
+{
+  "id": "ticket_20260405_001",
+  "status": "pending",
+  "created": "2026-04-05T10:30:00-04:00",
+  "updated": null,
+
+  "source": {
+    "channel": "whatsapp",
+    "peer_id": "+1555000100",
+    "peer_name": "Alice Johnson",
+    "group": null,
+    "message_id": "wa_msg_abc123"
+  },
+
+  "instruction": "Can you check the status of order #12345?",
+
+  "context": {
+    "conversation_history": [],
+    "attachments": [],
+    "reply_to_ticket": null
+  },
+
+  "routing": {
+    "target_skill": null,
+    "priority": "normal",
+    "deadline": null
+  },
+
+  "result": {
+    "status": null,
+    "output": null,
+    "files": [],
+    "reply_sent": false,
+    "completed_at": null
+  }
+}

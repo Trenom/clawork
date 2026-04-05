@@ -1,0 +1,3 @@
+{"ts": "2026-04-05T10:30:00-04:00", "role": "user", "content": "Hi, I need to check my account balance", "channel": "whatsapp", "peer": "+1555000100"}
+{"ts": "2026-04-05T10:30:15-04:00", "role": "assistant", "content": "Looking up your account details...", "channel": "whatsapp", "peer": "+1555000100"}
+{"ts": "2026-04-05T10:30:45-04:00", "role": "assistant", "content": "Your current balance is $2,450.00 as of today. Is there anything else you need help with?", "channel": "whatsapp", "peer": "+1555000100"}

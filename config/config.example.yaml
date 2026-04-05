@@ -1,0 +1,123 @@
+# Clawork — Configuration
+# Compatible with OpenClaw configuration structure
+# Rename this file to config.yaml and edit according to your setup
+
+agent:
+  name: "My Clawork Agent"
+  soul: "./soul.md"                    # Path to custom system prompt
+  language: "en"                       # Primary language
+  timezone: "America/New_York"
+
+# ─── Communication Channels ────────────────────────────────────────
+
+channels:
+  whatsapp:
+    enabled: true
+    method: "browser"                  # "browser" (WhatsApp Web) | "adb" (emulator)
+    check_interval: "5m"
+    url: "https://web.whatsapp.com"
+    allowed_peers: []                  # Whitelist of numbers. Empty = all
+    blocked_peers: []                  # Blacklist (takes priority)
+    session_mode: "per-peer"           # per-peer | per-channel | shared
+    auto_reply: true                   # Auto-respond
+    read_receipts: false               # Mark as read after processing
+
+  telegram:
+    enabled: false
+    method: "browser"
+    check_interval: "5m"
+    url: "https://web.telegram.org/k/"
+    allowed_groups: []
+    session_mode: "per-peer"
+
+  slack:
+    enabled: false
+    method: "connector"                # Uses native Cowork connector
+    check_interval: "on-event"         # Respond when message arrives, not polling
+
+  gmail:
+    enabled: false
+    method: "connector"
+    check_interval: "15m"
+    labels_to_watch:
+      - "INBOX"
+
+  notion:
+    enabled: false
+    method: "connector"
+    databases_to_watch: []
+
+  calendar:
+    enabled: false
+    method: "connector"
+    reminder_minutes: 15
+
+# ─── Routing ──────────────────────────────────────────────────────
+
+routing:
+  # Routing rules: most specific wins (order matters)
+  rules:
+    # Example: messages from specific peer go to specialized skill
+    # - match:
+    #     channel: "whatsapp"
+    #     peer: "+1555000100"
+    #   action:
+    #     skill: "clawork-soul"
+    #     priority: "high"
+
+    # Example: messages mentioning orders go to inventory agent
+    # - match:
+    #     channel: "*"
+    #     content_contains: "order"
+    #   action:
+    #     skill: "inventory-agent"
+    #     priority: "normal"
+
+    # Example: specific Telegram group with extra context
+    # - match:
+    #     channel: "telegram"
+    #     group: "teamwork"
+    #   action:
+    #     skill: "clawork-soul"
+    #     context_file: "./contexts/teamwork.md"
+
+  default:
+    skill: "clawork-soul"
+    priority: "normal"
+
+# ─── Heartbeat ────────────────────────────────────────────────────
+
+heartbeat:
+  interval: "15m"                      # 5m | 15m | 30m | 1h
+  actions:
+    - check_inbox                      # Process pending tickets
+    - check_channels                   # Read new messages from active channels
+    - cleanup_old_tickets              # Archive done tickets older than 24h
+
+# ─── External Orchestrator Bridge ──────────────────────────────────
+
+external_orchestrator:
+  enabled: false                       # true if you want bridge with external orchestrator
+  api_url: "https://orchestrator.example.com/api"
+  company_id: "your-company-id"
+  agent_id: "your-agent-id"
+  outbox_dir: "./outbox/orchestrator/"
+
+# ─── Paths ────────────────────────────────────────────────────────
+
+paths:
+  inbox: "./inbox/"
+  outbox: "./outbox/"
+  sessions: "./sessions/"
+  memory: "./memory/"
+  logs: "./logs/"
+  contexts: "./contexts/"
+
+# ─── Limits ───────────────────────────────────────────────────────
+
+limits:
+  max_tickets_per_heartbeat: 10        # Don't process more than N tickets per cycle
+  session_context_lines: 50            # Lines of history to include as context
+  session_compact_threshold: 200       # Compact session when exceeds N lines
+  message_delay_seconds: 3             # Delay between browser actions (anti-bot)
+  max_message_length: 4000             # Truncate messages longer than this
