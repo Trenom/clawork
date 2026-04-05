@@ -1,0 +1,21 @@
+# Clawork runtime files
+claw/
+
+# Personal configuration
+config.yaml
+soul.md
+*.bak
+*.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
