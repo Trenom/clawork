@@ -1,0 +1,55 @@
+site_name: Clawork
+site_description: Transform Claude Cowork into an Autonomous Personal Agent
+site_url: https://trenom.github.io/clawork/
+repo_url: https://github.com/Trenom/clawork
+repo_name: Trenom/clawork
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+    - search.share
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - Skills Reference: skills.md
+  - Configuration Schema: config-schema.md
+  - Heartbeat Setup: heartbeat.md
+  - Migrating from OpenClaw: migration.md
+  - Architecture: architecture.md
+  - Ticket Protocol: ticket-protocol.md
