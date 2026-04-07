@@ -805,42 +805,203 @@ def cleanup_outbox(max_age_days=7):
         logger.info("Cleanup: %d old tickets removed from outbox", removed)
 
 
-# --- Status ---
+# --- Status / Health ---
 
-def show_status():
-    """Show current system status."""
-    print("Clawork — System Status")
+ENGINE_VERSION = "0.1.0b0"
+
+
+def collect_status() -> dict:
+    """Collect full system status as a dict (used by both human and JSON output)."""
+    status = {"version": ENGINE_VERSION, "claw_home": CLAW_HOME}
+
+    # Config
+    config_path = os.path.join(CLAW_HOME, "config.yaml")
+    config_ok = os.path.exists(config_path)
+    config_error = None
+    if config_ok:
+        try:
+            import yaml
+            with open(config_path) as f:
+                yaml.safe_load(f)
+        except ImportError:
+            config_error = "PyYAML not installed"
+            config_ok = False
+        except Exception as e:
+            config_error = str(e)
+            config_ok = False
+    else:
+        config_error = f"{config_path} not found"
+    status["config"] = {"valid": config_ok, "error": config_error}
+
+    # Soul
+    soul_path = os.path.join(CLAW_HOME, "soul.md")
+    status["soul"] = {"exists": os.path.exists(soul_path)}
+
+    # Inbox
+    inbox_dir = os.path.join(CLAW_HOME, "inbox")
+    inbox_total = 0
+    inbox_pending = 0
+    inbox_processing = 0
+    if os.path.isdir(inbox_dir):
+        for f in glob.glob(os.path.join(inbox_dir, "*.json")):
+            try:
+                with open(f) as fh:
+                    t = json.load(fh)
+                inbox_total += 1
+                s = t.get("status", "")
+                if s == "pending":
+                    inbox_pending += 1
+                elif s == "processing":
+                    inbox_processing += 1
+            except (json.JSONDecodeError, OSError):
+                pass
+    status["inbox"] = {"total": inbox_total, "pending": inbox_pending, "processing": inbox_processing}
+
+    # Outbox (last 5 tickets)
+    outbox_dir = os.path.join(CLAW_HOME, "outbox")
+    outbox_done = 0
+    outbox_error = 0
+    recent_outbox = []
+    if os.path.isdir(outbox_dir):
+        outbox_files = sorted(glob.glob(os.path.join(outbox_dir, "*.json")),
+                              key=os.path.getmtime, reverse=True)
+        for f in outbox_files:
+            try:
+                with open(f) as fh:
+                    t = json.load(fh)
+                s = t.get("status", "")
+                if s == "done":
+                    outbox_done += 1
+                elif s == "error":
+                    outbox_error += 1
+                if len(recent_outbox) < 5:
+                    recent_outbox.append({
+                        "id": t.get("id", "?"),
+                        "status": s,
+                        "skill": t.get("routing", {}).get("target_skill", "?"),
+                        "completed_at": t.get("result", {}).get("completed_at"),
+                    })
+            except (json.JSONDecodeError, OSError):
+                pass
+    status["outbox"] = {"done": outbox_done, "error": outbox_error, "recent": recent_outbox}
+
+    # Poison queue
+    poison_dir = os.path.join(CLAW_HOME, "poison")
+    poison_count = len(glob.glob(os.path.join(poison_dir, "*.json"))) if os.path.isdir(poison_dir) else 0
+    status["poison"] = {"count": poison_count}
+
+    # Sessions
+    session_count = 0
+    session_bytes = 0
+    sessions_dir = os.path.join(CLAW_HOME, "sessions")
+    if os.path.isdir(sessions_dir):
+        for root, _dirs, files in os.walk(sessions_dir):
+            if ".archive" in root:
+                continue
+            for f in files:
+                if f.endswith(".jsonl"):
+                    session_count += 1
+                    try:
+                        session_bytes += os.path.getsize(os.path.join(root, f))
+                    except OSError:
+                        pass
+    status["sessions"] = {"active": session_count, "total_bytes": session_bytes}
+
+    # Last heartbeat
+    hb_log = os.path.join(CLAW_HOME, "logs", "heartbeat.jsonl")
+    last_hb = None
+    if os.path.exists(hb_log):
+        try:
+            with open(hb_log) as f:
+                lines = f.readlines()
+            if lines:
+                last_hb = json.loads(lines[-1])
+        except (json.JSONDecodeError, OSError):
+            pass
+    status["last_heartbeat"] = last_hb
+
+    # Dependencies
+    deps = {}
+    try:
+        import yaml
+        deps["pyyaml"] = yaml.__version__  # type: ignore[attr-defined]
+    except (ImportError, AttributeError):
+        deps["pyyaml"] = None
+    deps["python"] = sys.version.split()[0]
+    deps["zoneinfo"] = ZoneInfo is not None
+    status["dependencies"] = deps
+
+    # Skills registry
+    if _skill_registry is not None:
+        status["skills_registered"] = _skill_registry.names()
+    else:
+        status["skills_registered"] = []
+
+    return status
+
+
+def show_status(as_json: bool = False):
+    """Show current system status (human-readable or JSON)."""
+    status = collect_status()
+
+    if as_json:
+        print(json.dumps(status, indent=2, ensure_ascii=False))
+        return
+
+    print(f"Clawork Engine v{status['version']}")
+    print(f"CLAW_HOME: {status['claw_home']}")
     print()
 
-    inbox_files = glob.glob(os.path.join(CLAW_HOME, "inbox", "*.json"))
-    pending = sum(1 for f in inbox_files if json.load(open(f)).get("status") == "pending")
-    print(f"Inbox: {len(inbox_files)} tickets ({pending} pending)")
+    # Config
+    cfg = status["config"]
+    print(f"Config:    {'OK' if cfg['valid'] else 'ERROR — ' + (cfg['error'] or 'unknown')}")
 
-    outbox_files = glob.glob(os.path.join(CLAW_HOME, "outbox", "*.json"))
-    print(f"Outbox: {len(outbox_files)} completed tickets")
+    # Soul
+    print(f"Soul:      {'exists' if status['soul']['exists'] else 'MISSING'}")
+    print()
 
-    session_files = []
-    for root, dirs, files in os.walk(os.path.join(CLAW_HOME, "sessions")):
-        for f in files:
-            if f.endswith(".jsonl") and ".archive" not in root:
-                session_files.append(os.path.join(root, f))
-    print(f"Sessions: {len(session_files)} active conversations")
+    # Inbox
+    ib = status["inbox"]
+    print(f"Inbox:     {ib['total']} tickets ({ib['pending']} pending, {ib['processing']} processing)")
 
-    hb_log = os.path.join(CLAW_HOME, "logs", "heartbeat.jsonl")
-    if os.path.exists(hb_log):
-        with open(hb_log, "r") as f:
-            lines = f.readlines()
-        if lines:
-            last = json.loads(lines[-1])
-            print(f"Last heartbeat: {last['ts']} ({last['tickets_processed']} processed)")
+    # Outbox
+    ob = status["outbox"]
+    print(f"Outbox:    {ob['done']} done, {ob['error']} error")
+    if ob["recent"]:
+        for t in ob["recent"][:3]:
+            print(f"  └ {t['id']} [{t['status']}] -> {t['skill']}  ({t.get('completed_at', '?')})")
+
+    # Poison
+    pq = status["poison"]
+    if pq["count"]:
+        print(f"Poison:    {pq['count']} quarantined tickets")
+    print()
+
+    # Sessions
+    ss = status["sessions"]
+    size_kb = ss["total_bytes"] / 1024
+    print(f"Sessions:  {ss['active']} active ({size_kb:.1f} KB)")
+
+    # Last heartbeat
+    hb = status["last_heartbeat"]
+    if hb:
+        print(f"Heartbeat: {hb['ts']} ({hb['tickets_processed']} processed, {hb['duration_ms']}ms)")
     else:
-        print("No heartbeat logs yet")
+        print("Heartbeat: no runs yet")
+    print()
 
-    config_path = os.path.join(CLAW_HOME, "config.yaml")
-    print(f"Config: {'exists' if os.path.exists(config_path) else 'MISSING'}")
+    # Dependencies
+    deps = status["dependencies"]
+    print(f"Python:    {deps['python']}")
+    print(f"PyYAML:    {deps['pyyaml'] or 'NOT INSTALLED'}")
+    print(f"zoneinfo:  {'available' if deps['zoneinfo'] else 'unavailable'}")
 
-    soul_path = os.path.join(CLAW_HOME, "soul.md")
-    print(f"Soul: {'exists' if os.path.exists(soul_path) else 'MISSING'}")
+    # Skills
+    skills = status["skills_registered"]
+    if skills:
+        print(f"Skills:    {', '.join(skills)}")
+    else:
+        print("Skills:    (none registered)")
 
 
 # --- CLI ---
@@ -848,7 +1009,7 @@ def show_status():
 def main():
     if len(sys.argv) < 2:
         print("Usage: clawork-engine.py <command>")
-        print("Commands: heartbeat, route <file>, status, cleanup")
+        print("Commands: heartbeat, route <file>, status [--json], cleanup")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -863,7 +1024,8 @@ def main():
         print(f"Ticket: {ticket['id']}")
         print(f"Route: {action['skill']} (rule: {rule})")
     elif cmd == "status":
-        show_status()
+        as_json = "--json" in sys.argv
+        show_status(as_json=as_json)
     elif cmd == "cleanup":
         load_config()  # ensure timezone is set before any timestamp ops
         cleanup_outbox()
