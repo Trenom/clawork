@@ -301,7 +301,8 @@ with open(os.path.join(tmpdir, "inbox", "bad.json"), "w") as f:
     f.write("{not valid json!!")
 
 with open(os.path.join(tmpdir, "inbox", "good.json"), "w") as f:
-    json.dump({"id": "good", "status": "pending", "created": "2026-01-01", "routing": {"priority": "normal"}}, f)
+    json.dump({"id": "good", "status": "pending", "created": "2026-01-01", "routing": {"priority": "normal"},
+               "source": {"channel": "whatsapp", "peer_id": "+0", "peer_name": "T"}}, f)
 
 tickets = engine.load_pending_tickets()
 test("Malformed ticket skipped, valid loaded", len(tickets) == 1, f"got {len(tickets)}")

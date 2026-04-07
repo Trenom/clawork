@@ -25,8 +25,10 @@ import importlib
 import importlib.util
 import re
 import os
+import shutil
 import sys
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -45,6 +47,51 @@ DEFAULT_TZ_NAME = "UTC"
 # Resolved at load_config() time. Falls back to UTC if zoneinfo unavailable.
 _RUNTIME_TZ: timezone = timezone.utc
 
+# --- Structured Logging ---
+
+
+class _JsonFormatter(logging.Formatter):
+    """Emit log records as single-line JSON objects."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {
+            "ts": datetime.now(_RUNTIME_TZ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[1]:
+            entry["error"] = str(record.exc_info[1])
+        return json.dumps(entry, ensure_ascii=False)
+
+
+def setup_logging(level_name: str = "INFO"):
+    """Configure structured JSON logging to stderr."""
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(_JsonFormatter())
+    root = logging.getLogger("clawork")
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level)
+    return root
+
+
+# Bootstrap with default level; load_config() may override.
+_root_logger = setup_logging()
+
+
+# --- Metrics ---
+
+
+def _record_metric(metric_type: str, **fields):
+    """Append a metric entry to ~/claw/metrics/engine.jsonl."""
+    metrics_dir = os.path.join(CLAW_HOME, "metrics")
+    os.makedirs(metrics_dir, exist_ok=True)
+    entry = {"ts": now_iso(), "metric": metric_type, **fields}
+    with open(os.path.join(metrics_dir, "engine.jsonl"), "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
 
 def now_iso() -> str:
     return datetime.now(_RUNTIME_TZ).isoformat()
@@ -59,7 +106,7 @@ def _resolve_timezone(name: str):
     try:
         return ZoneInfo(name)
     except Exception:
-        sys.stderr.write(f"WARN: unknown timezone '{name}', falling back to UTC\n")
+        logging.getLogger("clawork").warning("Unknown timezone '%s', falling back to UTC", name)
         return timezone.utc
 
 
@@ -86,6 +133,10 @@ def load_config():
 
     tz_name = (config.get("agent", {}) or {}).get("timezone") or DEFAULT_TZ_NAME
     _RUNTIME_TZ = _resolve_timezone(tz_name)
+
+    # Reconfigure logging with level from config
+    log_level = (config.get("agent", {}) or {}).get("log_level", "INFO")
+    setup_logging(log_level)
 
     _skill_registry = load_skill_registry(config)
     if _skill_registry.names():
@@ -131,8 +182,25 @@ def route_ticket(ticket, config):
     return default, "default"
 
 
+def _quarantine_ticket(ticket_path: str, reason: str):
+    """Move a malformed ticket to ~/claw/poison/ with a reason sidecar."""
+    poison_dir = os.path.join(CLAW_HOME, "poison")
+    os.makedirs(poison_dir, exist_ok=True)
+    basename = os.path.basename(ticket_path)
+    dest = os.path.join(poison_dir, basename)
+    shutil.move(ticket_path, dest)
+    reason_path = dest + ".reason"
+    with open(reason_path, "w") as f:
+        json.dump({"quarantined_at": now_iso(), "reason": str(reason)}, f, ensure_ascii=False)
+    logger.warning("Quarantined malformed ticket %s: %s", basename, reason)
+    _record_metric("ticket_quarantined", file=basename, reason=str(reason))
+
+
 def load_pending_tickets():
-    """Load all pending tickets from inbox, sorted by priority then creation time."""
+    """Load all pending tickets from inbox, sorted by priority then creation time.
+
+    Malformed tickets are moved to ~/claw/poison/ instead of silently skipping.
+    """
     inbox = os.path.join(CLAW_HOME, "inbox")
     tickets = []
 
@@ -140,10 +208,16 @@ def load_pending_tickets():
         try:
             with open(f, "r") as fh:
                 ticket = json.load(fh)
+            # Validate required fields
+            if not isinstance(ticket, dict) or "id" not in ticket or "source" not in ticket:
+                _quarantine_ticket(f, "Missing required fields (id, source)")
+                continue
             if ticket.get("status") == "pending":
                 tickets.append((ticket, f))
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"  WARNING: Skipping malformed ticket {f}: {e}")
+        except json.JSONDecodeError as e:
+            _quarantine_ticket(f, f"Invalid JSON: {e}")
+        except (KeyError, TypeError) as e:
+            _quarantine_ticket(f, f"Malformed structure: {e}")
 
     tickets.sort(key=lambda x: (
         PRIORITY_ORDER.get(x[0].get("routing", {}).get("priority", "normal"), 2),
@@ -259,13 +333,57 @@ def compact_session(channel, peer_id, keep_recent=50):
         f.write(json.dumps(summary, ensure_ascii=False) + "\n")
         f.writelines(recent_lines)
 
-    print(f"  Session compacted: {channel}/{peer_id} ({len(old_lines)} old -> summary + {len(recent_lines)} recent)")
+    logger.info("Session compacted: channel=%s peer=%s old=%d recent=%d",
+                channel, peer_id, len(old_lines), len(recent_lines))
 
 
 # --- Ticket Processing ---
 
+# Default retry settings for dispatch_to_skill
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BACKOFF_BASE = 1  # seconds; delays are 1s, 4s, 16s (base * 4^attempt)
+RETRY_BACKOFF_MULTIPLIER = 4
+
+
+def _dispatch_with_retry(skill: str, ticket: dict, context: list[dict],
+                         max_attempts: int = RETRY_MAX_ATTEMPTS,
+                         _sleep_fn=time.sleep) -> str:
+    """Call dispatch_to_skill with exponential backoff on transient errors.
+
+    Retries on SkillDispatchError (network/HTTP failures).  Permanent errors
+    (SkillNotFoundError, ValueError) are raised immediately.
+    """
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            t0 = time.monotonic()
+            result = dispatch_to_skill(skill, ticket, context)
+            latency_ms = int((time.monotonic() - t0) * 1000)
+            _record_metric("dispatch_ok", skill=skill, ticket_id=ticket.get("id", "?"),
+                           attempt=attempt + 1, latency_ms=latency_ms)
+            return result
+        except SkillDispatchError as exc:
+            last_err = exc
+            delay = RETRY_BACKOFF_BASE * (RETRY_BACKOFF_MULTIPLIER ** attempt)
+            logger.warning("Dispatch attempt %d/%d for skill '%s' failed: %s (retry in %ds)",
+                           attempt + 1, max_attempts, skill, exc, delay)
+            _record_metric("dispatch_retry", skill=skill, ticket_id=ticket.get("id", "?"),
+                           attempt=attempt + 1, error=str(exc))
+            if attempt < max_attempts - 1:
+                _sleep_fn(delay)
+
+    # All retries exhausted
+    _record_metric("dispatch_failed", skill=skill, ticket_id=ticket.get("id", "?"),
+                   attempts=max_attempts, error=str(last_err))
+    raise last_err  # type: ignore[misc]
+
+
 def process_ticket(ticket, ticket_path, config):
-    """Process a single ticket: route, generate response, save session."""
+    """Process a single ticket: route, generate response, save session.
+
+    Uses exponential-backoff retry for skill dispatch.  On permanent failure
+    the ticket is moved to outbox with error status (dead-letter).
+    """
     ticket_id = ticket["id"]
     channel = ticket["source"]["channel"]
     peer_id = ticket["source"]["peer_id"]
@@ -279,7 +397,27 @@ def process_ticket(ticket, ticket_path, config):
     ticket["updated"] = now_iso()
 
     context = get_context(channel, peer_id)
-    response = dispatch_to_skill(skill, ticket, context)
+
+    try:
+        response = _dispatch_with_retry(skill, ticket, context)
+    except (SkillDispatchError, SkillNotFoundError) as exc:
+        # Dead-letter: write failed ticket to outbox with error status
+        logger.error("Ticket %s failed after retries: %s", ticket_id, exc)
+        ticket["status"] = "error"
+        ticket["result"] = {
+            "status": "error",
+            "output": str(exc),
+            "files": [],
+            "reply_sent": False,
+            "completed_at": now_iso(),
+        }
+        ticket["updated"] = now_iso()
+        outbox_path = os.path.join(CLAW_HOME, "outbox", os.path.basename(ticket_path))
+        os.makedirs(os.path.dirname(outbox_path), exist_ok=True)
+        with open(outbox_path, "w") as f:
+            json.dump(ticket, f, indent=2, ensure_ascii=False)
+        os.remove(ticket_path)
+        raise
 
     append_session(channel, peer_id, "user", instruction, ticket_id)
     append_session(channel, peer_id, "assistant", response, ticket_id)
@@ -295,6 +433,7 @@ def process_ticket(ticket, ticket_path, config):
     ticket["updated"] = now_iso()
 
     outbox_path = os.path.join(CLAW_HOME, "outbox", os.path.basename(ticket_path))
+    os.makedirs(os.path.dirname(outbox_path), exist_ok=True)
     with open(outbox_path, "w") as f:
         json.dump(ticket, f, indent=2, ensure_ascii=False)
 
@@ -581,14 +720,13 @@ def run_heartbeat():
     start = datetime.now(_RUNTIME_TZ)
     max_tickets = config.get("limits", {}).get("max_tickets_per_heartbeat", 10)
 
-    print(f"Clawork Heartbeat — {start.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print()
+    logger.info("Heartbeat started at %s", start.strftime('%Y-%m-%d %H:%M:%S %Z'))
 
     tickets = load_pending_tickets()
-    print(f"Pending tickets: {len(tickets)}")
+    logger.info("Pending tickets: %d", len(tickets))
 
     if not tickets:
-        print("  (inbox empty, nothing to process)")
+        logger.info("Inbox empty, nothing to process")
         log_heartbeat(start, 0, 0, 0)
         return
 
@@ -606,15 +744,16 @@ def run_heartbeat():
                 "rule": rule,
                 "priority": ticket["routing"]["priority"],
             })
-            print(f"  OK {ticket['id']:15s} -> {skill:20s} ({rule})")
+            logger.info("OK ticket=%s skill=%s rule=%s", ticket["id"], skill, rule)
         except Exception as e:
             errors += 1
-            print(f"  ERR {ticket.get('id', '?'):15s} — {e}")
+            logger.error("ERR ticket=%s error=%s", ticket.get("id", "?"), e)
 
-    print()
-    print(f"Processed: {processed} | Errors: {errors}")
+    logger.info("Heartbeat complete: processed=%d errors=%d", processed, errors)
 
     log_heartbeat(start, len(tickets), processed, errors, routes)
+    _record_metric("heartbeat", tickets_found=len(tickets),
+                   tickets_processed=processed, errors=errors)
     cleanup_outbox()
 
 
@@ -637,7 +776,7 @@ def log_heartbeat(start, found, processed, errors, routes=None):
     with open(log_path, "a") as f:
         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
-    print(f"Log: {log_path} (duration: {duration_ms}ms)")
+    logger.info("Heartbeat log written: path=%s duration_ms=%d", log_path, duration_ms)
 
 
 def cleanup_outbox(max_age_days=7):
@@ -663,7 +802,7 @@ def cleanup_outbox(max_age_days=7):
             pass
 
     if removed:
-        print(f"Cleanup: {removed} old tickets removed from outbox")
+        logger.info("Cleanup: %d old tickets removed from outbox", removed)
 
 
 # --- Status ---
