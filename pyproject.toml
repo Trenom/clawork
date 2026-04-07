@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clawork"
+version = "0.1.0b0"
+description = "Transform Claude Cowork into an autonomous multi-channel personal agent"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+windows = [
+    "tzdata",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Trenom/clawork"
+Repository = "https://github.com/Trenom/clawork"
+Documentation = "https://github.com/Trenom/clawork/tree/main/docs"
+
+[project.scripts]
+clawork = "scripts.clawork_engine:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts", "skills"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

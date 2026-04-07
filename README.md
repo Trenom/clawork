@@ -136,28 +136,35 @@ git clone https://github.com/Trenom/clawork.git
 cd clawork
 ```
 
-### 2. Run Setup
+### 2. Install Dependencies
+```bash
+pip install -e .
+```
+
+This installs Clawork and its dependencies (PyYAML). For development, use `pip install -e ".[dev]"`.
+
+### 3. Run Setup
 ```bash
 bash scripts/setup.sh
 ```
 
 This creates the directory structure at `~/claw/` and copies example configuration files.
 
-### 3. Edit Configuration
+### 4. Edit Configuration
 ```bash
 nano ~/claw/config.yaml
 ```
 
 Configure which channels to enable, set routing rules, adjust heartbeat interval, and customize paths.
 
-### 4. Customize Your Agent's Personality
+### 5. Customize Your Agent's Personality
 ```bash
 nano ~/claw/soul.md
 ```
 
 Define how your agent should behave, what tone to use, what information to keep private, and what priorities to follow. See `soul.example.md` for a template.
 
-### 5. Set Up Communication Channels
+### 6. Set Up Communication Channels
 
 **For WhatsApp Web:**
 ```bash
