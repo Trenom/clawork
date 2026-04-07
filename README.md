@@ -4,7 +4,7 @@
 
 Clawork is a skills kit and configuration system that transforms Anthropic's Claude Cowork into a fully autonomous personal agent. It ports the proven architecture of [OpenClaw](https://github.com/nicobailey/openclaw) to Cowork's native ecosystem, using only official Anthropic primitives: scheduled tasks, skills, computer use, projects, and connectors.
 
-Born in the Argentine tech ecosystem, Clawork demonstrates how to build sophisticated agentic systems within platform boundaries.
+Clawork demonstrates how to build sophisticated agentic systems within platform boundaries.
 
 ---
 
@@ -132,7 +132,7 @@ However, **Cowork already provides all necessary primitives natively**. Clawork 
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/anthropic-labs/clawork.git
+git clone https://github.com/Trenom/clawork.git
 cd clawork
 ```
 
@@ -204,7 +204,7 @@ All messages in Clawork flow through a standard ticket format (JSON):
 {
   "id": "ticket_20260405_001",
   "status": "pending",
-  "created": "2026-04-05T10:30:00-03:00",
+  "created": "2026-04-05T10:30:00Z",
   "updated": null,
 
   "source": {
@@ -265,7 +265,7 @@ agent:
   name: "My Clawork Agent"
   soul: "./soul.md"                    # Path to personality file
   language: "en"                       # Language (en, es, pt, etc.)
-  timezone: "America/New_York"
+  timezone: "America/New_York"         # IANA timezone; defaults to UTC if unset
 
 channels:
   whatsapp:
@@ -410,7 +410,9 @@ This imports your existing conversation sessions into Clawork's JSONL format.
 - [x] OpenClaw migration tools
 - [x] Documentation
 
-**Status**: Production ready
+**Status**: Beta — stable API, hardening in progress. The core engine works
+end-to-end for the happy path; reliability features (retries, structured
+logging, CI, packaging) are tracked in the issue queue.
 
 ### Phase 2: Messaging Tier (Weeks 3-4)
 - [ ] Skill: `clawork-messenger` — WhatsApp Web automation
@@ -440,6 +442,29 @@ This imports your existing conversation sessions into Clawork's JSONL format.
 - [ ] Analytics and logging dashboard
 
 **Status**: Experimental / optional modules
+
+---
+
+## Limitations
+
+Clawork is honest about what is and is not solid yet:
+
+- **Browser channels are fragile.** WhatsApp Web and Telegram Web are driven
+  through Computer Use. They are sensitive to UI changes upstream, can lose
+  session if the tab is closed, and are subject to rate limiting if you check
+  too aggressively. Treat them as best-effort, not transactional.
+- **PyYAML is required** for `scripts/clawork-engine.py`. The "no external
+  dependencies" claim refers to the architecture (no third-party gateways or
+  OAuth backends), not to a zero-pip-install runtime. Install PyYAML in the
+  environment that runs the engine. On Windows, `tzdata` is also recommended
+  if you set a non-UTC `agent.timezone`.
+- **Reliability engineering is unproven at scale.** There is no published CI
+  pipeline yet, no soak tests, and no production telemetry. The performance
+  numbers in CHANGELOG should be read as design targets, not benchmarks.
+- **`dispatch_to_skill` ships as a stub.** Real deployments must override it
+  to wire in their own skill registry, MCP tools, or external services.
+- **Single-user, local-first.** Multi-tenant or cloud-hosted deployments are
+  out of scope for now.
 
 ---
 
@@ -481,6 +506,7 @@ clawork/
 │
 ├── scripts/
 │   ├── setup.sh                       ← Initial setup
+│   ├── clawork-engine.py              ← Reference engine implementation
 │   ├── import-openclaw-config.sh
 │   └── import-openclaw-sessions.sh
 │
@@ -490,7 +516,11 @@ clawork/
 │   └── heartbeat-prompt.md            ← Prompt for scheduled task
 │
 └── tests/
-    └── test-scenarios.md              ← Manual test cases
+    ├── run-tests.sh                   ← Test runner
+    ├── test_router.py                 ← Router unit tests
+    ├── test_sessions.py               ← Session unit tests
+    ├── test_soul.py                   ← Soul unit tests
+    └── test-integration.py            ← Integration tests
 ```
 
 ---
@@ -514,7 +544,7 @@ clawork/
 
 Clawork adheres to these principles:
 
-1. **No external dependencies** — Use only native Cowork primitives
+1. **No third-party gateways** — Use only native Cowork primitives for the agent loop
 2. **Configuration over code** — Everything configurable via YAML
 3. **The SOUL is sacred** — Respect your agent's personality
 4. **Fail gracefully** — Errors create tickets, not silent failures
@@ -540,9 +570,8 @@ The above copyright notice and this permission notice shall be included in all c
 
 Clawork is built on the proven architecture of [OpenClaw](https://github.com/nicobailey/openclaw) by Nico Bailey. It reimplements core concepts using Anthropic's native Cowork platform to demonstrate how sophisticated agentic systems can be built within platform boundaries.
 
-The project originated in the Argentine tech ecosystem, built by teams working on document management and workflow automation.
-
-Developed with support from the Anthropic Cowork community.
+Thanks to the Cowork community for early feedback and to everyone who has tested
+the engine end-to-end on their own setups.
 
 ---
 
