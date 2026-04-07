@@ -13,6 +13,10 @@ Usage:
     python3 clawork-engine.py route <file>  # Route a single ticket
     python3 clawork-engine.py status        # Show system status
     python3 clawork-engine.py cleanup       # Cleanup old tickets
+
+Dependencies:
+    - PyYAML (required) — install with `pip install pyyaml`
+    - tzdata (recommended on Windows) — for IANA timezone names
 """
 
 import json
@@ -20,22 +24,44 @@ import glob
 import re
 import os
 import sys
-import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+try:
+    from zoneinfo import ZoneInfo  # py>=3.9
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 
 # --- Config ---
 
 CLAW_HOME = os.environ.get("CLAW_HOME", os.path.expanduser("~/claw"))
-TZ = timezone(timedelta(hours=-3))  # Default: America/Argentina/Cordoba
+DEFAULT_TZ_NAME = "UTC"
+
+# Resolved at load_config() time. Falls back to UTC if zoneinfo unavailable.
+_RUNTIME_TZ: timezone = timezone.utc
 
 
-def now_iso():
-    return datetime.now(TZ).isoformat()
+def now_iso() -> str:
+    return datetime.now(_RUNTIME_TZ).isoformat()
+
+
+def _resolve_timezone(name: str):
+    """Resolve a timezone name to a tzinfo. Falls back to UTC on failure."""
+    if not name:
+        return timezone.utc
+    if ZoneInfo is None:
+        return timezone.utc
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        sys.stderr.write(f"WARN: unknown timezone '{name}', falling back to UTC\n")
+        return timezone.utc
 
 
 def load_config():
-    """Load config.yaml (supports PyYAML or falls back to built-in rules)."""
+    """Load config.yaml. PyYAML is required — fails loudly if missing."""
+    global _RUNTIME_TZ
+
     config_path = os.path.join(CLAW_HOME, "config.yaml")
     if not os.path.exists(config_path):
         print(f"ERROR: {config_path} not found")
@@ -43,24 +69,16 @@ def load_config():
 
     try:
         import yaml
-        with open(config_path, "r") as f:
-            return yaml.safe_load(f)
     except ImportError:
-        pass
+        print("ERROR: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
+        sys.exit(1)
 
-    # Manual fallback — provide example rules
-    # Users should install PyYAML for full config support: pip install pyyaml
-    return {
-        "routing": {
-            "rules": [],
-            "default": {"skill": "clawork-soul", "priority": "normal"}
-        },
-        "limits": {
-            "max_tickets_per_heartbeat": 10,
-            "session_context_lines": 50,
-            "session_compact_threshold": 200,
-        }
-    }
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f) or {}
+
+    tz_name = (config.get("agent", {}) or {}).get("timezone") or DEFAULT_TZ_NAME
+    _RUNTIME_TZ = _resolve_timezone(tz_name)
+    return config
 
 
 # --- Routing Engine ---
@@ -194,7 +212,7 @@ def compact_session(channel, peer_id, keep_recent=50):
 
     archive_dir = os.path.join(CLAW_HOME, "sessions", ".archive")
     os.makedirs(archive_dir, exist_ok=True)
-    archive_name = f"{channel}_{peer_id}_{datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}.jsonl"
+    archive_name = f"{channel}_{peer_id}_{datetime.now(_RUNTIME_TZ).strftime('%Y%m%d_%H%M%S')}.jsonl"
     with open(os.path.join(archive_dir, archive_name), "w") as f:
         f.writelines(lines)
 
@@ -272,42 +290,35 @@ def process_ticket(ticket, ticket_path, config):
 
 
 def dispatch_to_skill(skill, ticket, context):
-    """Dispatch ticket to appropriate skill and get response.
+    """Dispatch a ticket to a skill and return the response.
 
-    In production, this invokes actual Cowork skills.
-    Override this function to integrate with your skill implementations.
+    This is a generic stub. In production deployments, override this function
+    (or replace it with a registry-based dispatcher) to invoke real Cowork
+    skills, MCP tools, or external services. The default implementation only
+    echoes the ticket so the engine end-to-end pipeline can be tested in
+    isolation without any skill backends configured.
+
+    Contract:
+        skill: str         — name of the destination skill (from routing rules)
+        ticket: dict       — ticket payload (see docs/ticket-protocol.md)
+        context: list[dict] — recent session entries for the same peer/channel
+
+    Returns:
+        str — the textual response that will be appended to the session and
+              written to ticket.result.output.
     """
-    instruction = ticket["instruction"]
-    peer_name = ticket["source"].get("peer_name", "")
-
-    if skill == "clawork-soul":
-        context_summary = ""
-        if context:
-            context_summary = f" (context: {len(context)} messages)"
-        return f"[clawork-soul] Response to {peer_name}: processing '{instruction[:80]}'{context_summary}"
-
-    elif skill == "gde-agent":
-        numbers = re.findall(r'(?:EX|IF|NO|PV|RE)-\d{4}-\d+', instruction)
-        if numbers:
-            return f"[gde-agent] Querying GDE for: {', '.join(numbers)}"
-        return f"[gde-agent] Processing document query: {instruction[:80]}"
-
-    elif skill == "sugop-agent":
-        return f"[sugop-agent] Querying SUGOP: {instruction[:80]}"
-
-    elif skill == "openclaw-bridge":
-        return f"[openclaw-bridge] Delegating to OpenClaw: {instruction[:80]}"
-
-    else:
-        return f"[{skill}] Processing: {instruction[:80]}"
+    instruction = ticket.get("instruction", "")
+    peer_name = ticket.get("source", {}).get("peer_name", "")
+    ctx_size = len(context) if context else 0
+    return f"[{skill}] (stub) replying to {peer_name or 'unknown'}: '{instruction[:80]}' (context: {ctx_size})"
 
 
 # --- Heartbeat ---
 
 def run_heartbeat():
     """Execute one heartbeat cycle."""
-    start = datetime.now(TZ)
     config = load_config()
+    start = datetime.now(_RUNTIME_TZ)
     max_tickets = config.get("limits", {}).get("max_tickets_per_heartbeat", 10)
 
     print(f"Clawork Heartbeat — {start.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -349,7 +360,7 @@ def run_heartbeat():
 
 def log_heartbeat(start, found, processed, errors, routes=None):
     """Write heartbeat execution log."""
-    end = datetime.now(TZ)
+    end = datetime.now(_RUNTIME_TZ)
     duration_ms = int((end - start).total_seconds() * 1000)
 
     log_entry = {
@@ -375,7 +386,7 @@ def cleanup_outbox(max_age_days=7):
     if not os.path.exists(outbox):
         return
 
-    cutoff = datetime.now(TZ) - timedelta(days=max_age_days)
+    cutoff = datetime.now(_RUNTIME_TZ) - timedelta(days=max_age_days)
     removed = 0
 
     for f in glob.glob(os.path.join(outbox, "*.json")):
@@ -455,6 +466,7 @@ def main():
     elif cmd == "status":
         show_status()
     elif cmd == "cleanup":
+        load_config()  # ensure timezone is set before any timestamp ops
         cleanup_outbox()
         print("Cleanup complete")
     else:
