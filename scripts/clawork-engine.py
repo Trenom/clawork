@@ -21,11 +21,16 @@ Dependencies:
 
 import json
 import glob
+import importlib
+import importlib.util
 import re
 import os
 import sys
+import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 try:
     from zoneinfo import ZoneInfo  # py>=3.9
@@ -59,8 +64,11 @@ def _resolve_timezone(name: str):
 
 
 def load_config():
-    """Load config.yaml. PyYAML is required — fails loudly if missing."""
-    global _RUNTIME_TZ
+    """Load config.yaml and initialize the skill registry.
+
+    PyYAML is required — fails loudly if missing.
+    """
+    global _RUNTIME_TZ, _skill_registry
 
     config_path = os.path.join(CLAW_HOME, "config.yaml")
     if not os.path.exists(config_path):
@@ -78,6 +86,11 @@ def load_config():
 
     tz_name = (config.get("agent", {}) or {}).get("timezone") or DEFAULT_TZ_NAME
     _RUNTIME_TZ = _resolve_timezone(tz_name)
+
+    _skill_registry = load_skill_registry(config)
+    if _skill_registry.names():
+        logger.info("Skill registry loaded: %s", ", ".join(_skill_registry.names()))
+
     return config
 
 
@@ -289,24 +302,271 @@ def process_ticket(ticket, ticket_path, config):
     return skill, rule, response
 
 
-def dispatch_to_skill(skill, ticket, context):
-    """Dispatch a ticket to a skill and return the response.
+# --- Skill Registry & Dispatch ---
 
-    This is a generic stub. In production deployments, override this function
-    (or replace it with a registry-based dispatcher) to invoke real Cowork
-    skills, MCP tools, or external services. The default implementation only
-    echoes the ticket so the engine end-to-end pipeline can be tested in
-    isolation without any skill backends configured.
+logger = logging.getLogger("clawork.dispatch")
+
+
+class SkillNotFoundError(Exception):
+    """Raised when a skill name is not in the registry."""
+
+
+class SkillDispatchError(Exception):
+    """Raised when a skill handler fails during execution."""
+
+
+class SkillRegistry:
+    """Registry that maps skill names to dispatch handlers.
+
+    Loads skill definitions from either:
+    - A standalone ``skills.yaml`` file in CLAW_HOME, or
+    - The ``skills`` key inside the main ``config.yaml``.
+
+    Each entry has a ``type`` (``local``, ``mcp``, or ``webhook``) and
+    type-specific configuration.  See docs/dispatch.md for the full schema.
+    """
+
+    def __init__(self, skills_config: dict | None = None):
+        self._handlers: dict[str, dict] = {}
+        if skills_config:
+            for name, defn in skills_config.items():
+                self.register(name, defn)
+
+    def register(self, name: str, defn: dict):
+        """Register a skill definition."""
+        if "type" not in defn:
+            raise ValueError(f"Skill '{name}' is missing required field 'type'")
+        if defn["type"] not in ("local", "mcp", "webhook"):
+            raise ValueError(f"Skill '{name}' has unknown type '{defn['type']}'")
+        self._handlers[name] = dict(defn)
+
+    def get(self, name: str) -> dict | None:
+        return self._handlers.get(name)
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._handlers
+
+    def names(self) -> list[str]:
+        return list(self._handlers.keys())
+
+
+def load_skill_registry(config: dict) -> SkillRegistry:
+    """Build a SkillRegistry from config and/or a standalone skills.yaml file.
+
+    Precedence: entries in ``skills.yaml`` override same-name entries from
+    ``config.yaml["skills"]``.
+    """
+    skills_cfg: dict = dict(config.get("skills", {}) or {})
+
+    skills_yaml_path = os.path.join(CLAW_HOME, "skills.yaml")
+    if os.path.exists(skills_yaml_path):
+        try:
+            import yaml
+        except ImportError:
+            logger.warning("PyYAML needed to load skills.yaml; skipping")
+        else:
+            with open(skills_yaml_path, "r") as f:
+                extra = yaml.safe_load(f) or {}
+            for name, defn in extra.items():
+                skills_cfg[name] = defn
+
+    return SkillRegistry(skills_cfg)
+
+
+# ---- Dispatch handlers per type ----
+
+def _dispatch_local(defn: dict, skill: str, ticket: dict, context: list[dict]) -> str:
+    """Dispatch to a local Python handler.
+
+    Definition fields:
+        module : str  — dotted module path *or* file path relative to CLAW_HOME
+        handler: str  — function name inside the module (default ``handle``)
+    """
+    module_ref = defn.get("module", "")
+    handler_name = defn.get("handler", "handle")
+
+    if not module_ref:
+        raise SkillDispatchError(f"Local skill '{skill}' has no 'module' configured")
+
+    # Support file-path references (relative to CLAW_HOME)
+    if module_ref.endswith(".py") or os.sep in module_ref or "/" in module_ref:
+        module_path = os.path.join(CLAW_HOME, module_ref)
+        if not os.path.isfile(module_path):
+            raise SkillDispatchError(f"Local skill '{skill}': module file not found: {module_path}")
+        spec = importlib.util.spec_from_file_location(f"clawork_skill_{skill}", module_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    else:
+        # Dotted module path
+        try:
+            mod = importlib.import_module(module_ref)
+        except ImportError as exc:
+            raise SkillDispatchError(f"Local skill '{skill}': cannot import module '{module_ref}': {exc}") from exc
+
+    fn = getattr(mod, handler_name, None)
+    if fn is None or not callable(fn):
+        raise SkillDispatchError(f"Local skill '{skill}': handler '{handler_name}' not found in module")
+
+    return fn(ticket, context)
+
+
+def _dispatch_mcp(defn: dict, skill: str, ticket: dict, context: list[dict]) -> str:
+    """Dispatch to an MCP tool exposed by the host Cowork server.
+
+    Definition fields:
+        server_url : str  — base URL of the MCP server (e.g. http://localhost:8080)
+        tool_name  : str  — name of the MCP tool to invoke
+        timeout    : int  — request timeout in seconds (default 30)
+    """
+    server_url = defn.get("server_url", "")
+    tool_name = defn.get("tool_name", skill)
+    timeout = int(defn.get("timeout", 30))
+
+    if not server_url:
+        raise SkillDispatchError(f"MCP skill '{skill}' has no 'server_url' configured")
+
+    url = f"{server_url.rstrip('/')}/tools/{tool_name}/invoke"
+
+    payload = json.dumps({
+        "ticket": ticket,
+        "context": context,
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = Request(url, data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+
+    # Forward env-based auth if configured
+    auth_header = defn.get("auth_header")
+    if auth_header:
+        req.add_header("Authorization", _expand_env_vars(auth_header))
+
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise SkillDispatchError(f"MCP skill '{skill}': HTTP {exc.code} from {url}") from exc
+    except (URLError, OSError) as exc:
+        raise SkillDispatchError(f"MCP skill '{skill}': connection error to {url}: {exc}") from exc
+
+    # MCP tools return {content: [{type: "text", text: "..."}]} or similar
+    if isinstance(body, dict):
+        content = body.get("content")
+        if isinstance(content, list):
+            texts = [c.get("text", "") for c in content if isinstance(c, dict)]
+            return "\n".join(texts)
+        if "text" in body:
+            return body["text"]
+        if "output" in body:
+            return str(body["output"])
+    return json.dumps(body, ensure_ascii=False)
+
+
+def _dispatch_webhook(defn: dict, skill: str, ticket: dict, context: list[dict]) -> str:
+    """Dispatch to an HTTP webhook endpoint.
+
+    Definition fields:
+        url     : str           — webhook URL
+        headers : dict[str,str] — extra headers (values support ``{env:VAR}`` expansion)
+        method  : str           — HTTP method (default POST)
+        timeout : int           — request timeout in seconds (default 30)
+    """
+    url = defn.get("url", "")
+    timeout = int(defn.get("timeout", 30))
+    method = defn.get("method", "POST").upper()
+    extra_headers = defn.get("headers", {}) or {}
+
+    if not url:
+        raise SkillDispatchError(f"Webhook skill '{skill}' has no 'url' configured")
+
+    payload = json.dumps({
+        "skill": skill,
+        "ticket": ticket,
+        "context": context,
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = Request(_expand_env_vars(url), data=payload, method=method)
+    req.add_header("Content-Type", "application/json")
+    for k, v in extra_headers.items():
+        req.add_header(k, _expand_env_vars(str(v)))
+
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+    except HTTPError as exc:
+        raise SkillDispatchError(f"Webhook skill '{skill}': HTTP {exc.code} from {url}") from exc
+    except (URLError, OSError) as exc:
+        raise SkillDispatchError(f"Webhook skill '{skill}': connection error to {url}: {exc}") from exc
+
+    # Try to extract a text response from JSON, fall back to raw body
+    try:
+        data = json.loads(body)
+        if isinstance(data, dict):
+            return data.get("output") or data.get("text") or data.get("response") or body
+        return body
+    except (json.JSONDecodeError, ValueError):
+        return body
+
+
+def _expand_env_vars(value: str) -> str:
+    """Expand ``{env:VAR_NAME}`` placeholders in a string."""
+    def _replace(m):
+        var = m.group(1)
+        return os.environ.get(var, "")
+    return re.sub(r"\{env:(\w+)\}", _replace, value)
+
+
+# Dispatch type router
+_DISPATCH_HANDLERS = {
+    "local": _dispatch_local,
+    "mcp": _dispatch_mcp,
+    "webhook": _dispatch_webhook,
+}
+
+# Module-level registry, populated by load_config() or explicitly.
+_skill_registry: SkillRegistry | None = None
+
+
+def dispatch_to_skill(skill: str, ticket: dict, context: list[dict]) -> str:
+    """Dispatch a ticket to a skill handler via the skill registry.
+
+    Looks up the skill in the registry and delegates to the appropriate handler
+    based on the skill type (local, mcp, or webhook).  If the skill is not
+    registered, falls back to a stub echo response so the engine can still run
+    in environments without any skill backends configured.
 
     Contract:
-        skill: str         — name of the destination skill (from routing rules)
-        ticket: dict       — ticket payload (see docs/ticket-protocol.md)
-        context: list[dict] — recent session entries for the same peer/channel
+        skill   : str         — name of the destination skill (from routing rules)
+        ticket  : dict        — ticket payload (see docs/ticket-protocol.md)
+        context : list[dict]  — recent session entries for the same peer/channel
 
     Returns:
         str — the textual response that will be appended to the session and
               written to ticket.result.output.
     """
+    global _skill_registry
+
+    if _skill_registry is None:
+        # Fallback: no registry loaded yet (e.g. called outside heartbeat)
+        logger.warning("Skill registry not loaded; returning stub response")
+        return _stub_response(skill, ticket, context)
+
+    defn = _skill_registry.get(skill)
+    if defn is None:
+        logger.warning("Skill '%s' not found in registry; returning stub response", skill)
+        return _stub_response(skill, ticket, context)
+
+    handler = _DISPATCH_HANDLERS.get(defn["type"])
+    if handler is None:
+        raise SkillDispatchError(f"No handler for skill type '{defn['type']}'")
+
+    logger.info("Dispatching ticket %s to skill '%s' (type=%s)",
+                ticket.get("id", "?"), skill, defn["type"])
+
+    return handler(defn, skill, ticket, context)
+
+
+def _stub_response(skill: str, ticket: dict, context: list[dict]) -> str:
+    """Fallback echo response when no real handler is available."""
     instruction = ticket.get("instruction", "")
     peer_name = ticket.get("source", {}).get("peer_name", "")
     ctx_size = len(context) if context else 0

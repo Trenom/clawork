@@ -113,6 +113,37 @@ paths:
   logs: "./logs/"
   contexts: "./contexts/"
 
+# ─── Skills Dispatch ──────────────────────────────────────────────
+#
+# Map skill names (referenced in routing rules) to concrete handlers.
+# Each skill has a `type` (local, mcp, or webhook) and type-specific config.
+# A standalone `skills.yaml` in CLAW_HOME can also define or override entries.
+
+skills:
+  # --- Local skill: Python callable in the repo ---
+  # clawork-soul:
+  #   type: local
+  #   module: skills/clawork-soul/handler.py   # relative to CLAW_HOME, or dotted module path
+  #   handler: handle                          # function name (default: handle)
+
+  # --- MCP tool: skill exposed by the host Cowork server ---
+  # gde-agent:
+  #   type: mcp
+  #   server_url: http://localhost:8080        # MCP server base URL
+  #   tool_name: gde_lookup                    # MCP tool name (default: skill name)
+  #   auth_header: "Bearer {env:MCP_TOKEN}"    # optional; supports {env:VAR} expansion
+  #   timeout: 30                              # seconds (default: 30)
+
+  # --- Webhook: generic HTTP endpoint for custom deployments ---
+  # crm-agent:
+  #   type: webhook
+  #   url: https://crm.example.com/api/skill
+  #   method: POST                             # default: POST
+  #   headers:
+  #     Authorization: "Bearer {env:CRM_TOKEN}"
+  #     X-Source: clawork
+  #   timeout: 30
+
 # ─── Limits ───────────────────────────────────────────────────────
 
 limits:
