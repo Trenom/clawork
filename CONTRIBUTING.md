@@ -34,14 +34,15 @@ This project is committed to providing a welcoming and inclusive environment for
 - Git installed
 - Claude Cowork running
 - Basic familiarity with Clawork (read README.md and setup guide)
-- Python 3 (for import scripts)
+- Python 3 (for import scripts and the reference engine)
+- PyYAML (`pip install pyyaml`) — required by `scripts/clawork-engine.py`
 - Bash (for shell scripts)
 
 ### Set Up Your Development Environment
 
 ```bash
 # Clone the repository
-git clone https://github.com/anthropic-labs/clawork.git
+git clone https://github.com/Trenom/clawork.git
 cd clawork
 
 # Create a feature branch
@@ -243,6 +244,17 @@ Other skills or components it depends on.
 
 ### Testing Your Code
 
+The repo ships with a small Python test suite under `tests/`. Run it with:
+
+```bash
+bash tests/run-tests.sh
+# or
+python -m pytest tests/
+```
+
+When you add a new skill or change routing, please add or extend a unit test
+in `tests/` so regressions get caught.
+
 #### Manual Testing Checklist
 
 ```markdown
@@ -423,6 +435,7 @@ clawork/
 │
 ├── scripts/                ← Setup & utilities
 │   ├── setup.sh            ← Initialize Clawork
+│   ├── clawork-engine.py   ← Reference engine
 │   └── import-openclaw-config.sh
 │
 ├── templates/              ← Example files
@@ -430,8 +443,12 @@ clawork/
 │   ├── session.example.jsonl
 │   └── heartbeat-prompt.md
 │
-└── tests/                  ← Test documentation
-    └── test-scenarios.md   ← Manual test cases
+└── tests/                  ← Automated tests
+    ├── run-tests.sh        ← Test runner
+    ├── test_router.py
+    ├── test_sessions.py
+    ├── test_soul.py
+    └── test-integration.py
 ```
 
 ---
@@ -442,6 +459,8 @@ clawork/
 
 - [ ] Phase 2: clawork-messenger skill (WhatsApp/Telegram automation)
 - [ ] Documentation for Windows/WSL2 setup
+- [ ] CI workflow (pytest + ruff + mypy on PRs)
+- [ ] Real `dispatch_to_skill` implementation (registry / MCP-based)
 - [ ] Performance benchmarking and optimization
 - [ ] End-to-end test suite
 
@@ -503,15 +522,11 @@ We follow semantic versioning: MAJOR.MINOR.PATCH
 
 ## Maintainers
 
-The Clawork project is maintained by:
+The Clawork project is maintained by the Trenom organization on GitHub.
+Reach the maintainers via:
 
-- **Lead Maintainer**: [Name] (@username)
-- **Contributors**: [List of significant contributors]
-
-Contact maintainers via:
 - GitHub Issues (public)
 - GitHub Discussions (public)
-- Email (private, if needed)
 
 ---
 
