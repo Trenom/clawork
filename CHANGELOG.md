@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Session compaction with automatic summarization
 - Multi-agent coordination
 - Integration test suite
+- CI workflow (pytest + ruff + mypy on PRs)
+- `pyproject.toml` with an honest dependency manifest
+- Real `dispatch_to_skill` implementation (registry / MCP-based)
 
 ### Planned for Phase 3
 
@@ -33,11 +36,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
-## [1.0.0] - 2026-04-05
+## [0.1.0-beta] - 2026-04-05 (unreleased)
 
-### Initial Release
+> **Note:** This entry was originally tagged as `1.0.0` but no GitHub
+> release has been published and the reliability story is still
+> evolving. It is being tracked as `0.1.0-beta` until a CI pipeline,
+> a real dispatch implementation, and a published release exist.
 
-This is the first stable release of Clawork, featuring the core functionality necessary to operate Claude Cowork as an autonomous personal agent.
+### Initial Beta
+
+This is the first beta cut of Clawork, featuring the core functionality
+necessary to operate Claude Cowork as an autonomous personal agent. The
+APIs are stable enough to build against; reliability features are still
+being layered on.
 
 #### Added
 
@@ -50,8 +61,8 @@ This is the first stable release of Clawork, featuring the core functionality ne
 
 **Features**:
 - Multi-channel message handling:
-  - WhatsApp Web (via Computer Use)
-  - Telegram Web (via Computer Use)
+  - WhatsApp Web (via Computer Use, best-effort)
+  - Telegram Web (via Computer Use, best-effort)
   - Slack (native connector)
   - Gmail (native connector)
 - Conversation history per peer per channel
@@ -68,7 +79,7 @@ This is the first stable release of Clawork, featuring the core functionality ne
 - Soul.md customization template
 
 **Documentation**:
-- README.md with quick start guide
+- README.md with quick start guide and Limitations section
 - Architecture documentation with system design diagrams
 - Complete configuration reference (`docs/config-reference.md`)
 - Ticket protocol specification (`docs/ticket-protocol.md`)
@@ -105,7 +116,7 @@ This is the first stable release of Clawork, featuring the core functionality ne
 - Routing rules with flexible matching logic
 - Per-skill context files
 - Configurable resource limits
-- Timezone and language selection
+- Timezone (IANA, defaults to UTC) and language selection
 
 **Heartbeat Scheduler**:
 - Configurable intervals (5m, 15m, 30m, 1h)
@@ -125,15 +136,16 @@ This is the first stable release of Clawork, featuring the core functionality ne
 #### Technical Foundation
 
 - **Message Bus**: Filesystem-based (JSON files in inbox/outbox)
-- **Persistence**: Local filesystem (no external dependencies)
+- **Persistence**: Local filesystem (no third-party gateway services)
 - **Connectors**: Cowork native connectors for Slack and Gmail
 - **Browser Automation**: Computer Use for WhatsApp Web and Telegram Web
 - **Scheduling**: Cowork Scheduled Tasks
-- **Language**: Compatible with Claude and all supported agents
+- **Runtime dependencies**: Python 3 + PyYAML (and `tzdata` on Windows
+  if a non-UTC `agent.timezone` is configured)
 
 #### Compatibility
 
-- Full backward compatibility with OpenClaw configurations
+- Backward compatibility with OpenClaw configurations
 - OpenClaw SOUL files work without modification
 - Session format compatible (with migration helper)
 - Configuration conversion tool (openclaw.json → config.yaml)
@@ -144,25 +156,38 @@ This is the first stable release of Clawork, featuring the core functionality ne
    - Requires keeping browser tabs open
    - Sensitive to UI changes in WhatsApp/Telegram Web
    - Subject to rate limiting if checking too frequently
+   - Should be treated as best-effort, not transactional
 
-2. **Session Compaction**:
+2. **Reliability engineering is unproven at scale**:
+   - No CI pipeline yet
+   - No soak tests or production telemetry
+   - Retry / structured-logging story is still being implemented
+
+3. **`dispatch_to_skill` ships as a stub** — real deployments must
+   override it to wire in their own skill registry, MCP tools, or
+   external services.
+
+4. **Session Compaction**:
    - Current implementation is basic (simple summarization)
    - May lose fine details during compression
 
-3. **Native Android Apps**:
+5. **Native Android Apps**:
    - Not yet supported (experimental Android automation planned for Phase 4)
    - Workaround: Use WhatsApp Web / Telegram Web
 
-4. **Cloud Heartbeat**:
+6. **Cloud Heartbeat**:
    - Currently requires local Cowork project
    - Cloud-based heartbeat planned for Phase 4
 
-#### Performance Notes
+#### Design Targets (not benchmarks)
 
-- Default configuration processes ~40 messages/hour
-- Suitable for personal assistant and small team use cases
-- Session files stay under 500 KB with automatic compaction
-- Inbox/outbox can handle thousands of tickets
+The numbers below are intended throughput, not measured production metrics.
+A real benchmarking pass is tracked in the Phase 3 backlog.
+
+- Target throughput: ~40 messages/hour with default settings
+- Target use cases: personal assistant and small team
+- Target session size: under 500 KB with automatic compaction
+- Target inbox/outbox capacity: thousands of tickets
 
 #### Security Notes
 
@@ -184,9 +209,8 @@ Users coming from OpenClaw:
 ## Development Timeline
 
 ### Phase 1 (2026-04-05)
-**Status**: Complete
+**Status**: Beta — core functionality implemented, hardening in progress
 
-Core functionality implemented and tested:
 - Skills framework
 - Routing engine
 - Session management
@@ -235,8 +259,6 @@ Clawork follows semantic versioning:
 
 ## Upgrade Guide
 
-### From 1.0.0 to Future Versions
-
 When new versions are released, upgrade steps will be documented here.
 
 ---
@@ -256,7 +278,8 @@ When new versions are released, upgrade steps will be documented here.
 
 Clawork reimplements core concepts using Anthropic's native Cowork platform, demonstrating how sophisticated agentic systems can be built within platform boundaries.
 
-**Developed by**: The Anthropic community and contributors
+**Maintained by**: Trenom and contributors. Thanks to the Cowork community
+for early feedback.
 
 ---
 
@@ -266,6 +289,6 @@ Clawork is released under the MIT License. See LICENSE file for details.
 
 ---
 
-**Last Updated**: 2026-04-05
+**Last Updated**: 2026-04-07
 
-For the latest version and updates, visit: https://github.com/anthropic-labs/clawork
+For the latest version and updates, visit: https://github.com/Trenom/clawork
