@@ -12,14 +12,15 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 
 # Import engine from scripts/
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "clawork-engine.py")
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 
@@ -67,8 +68,8 @@ print()
 
 print("=== Structured Logging: JSON format ===")
 
-import logging
 import io
+import logging
 
 handler = logging.StreamHandler(io.StringIO())
 handler.setFormatter(engine._JsonFormatter())
@@ -258,7 +259,7 @@ test("Metrics file created", os.path.exists(metrics_path))
 
 if os.path.exists(metrics_path):
     with open(metrics_path) as f:
-        lines = [json.loads(l) for l in f if l.strip()]
+        lines = [json.loads(ln) for ln in f if ln.strip()]
     test("Two metric entries written", len(lines) == 2, f"got {len(lines)}")
     test("Metric has ts", "ts" in lines[0])
     test("Metric has type", lines[0]["metric"] == "test_metric")

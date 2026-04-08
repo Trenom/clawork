@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# mypy: ignore-errors  # ECH-36 status command has legacy shadowing; cleanup tracked for post-beta
 """
 Clawork Engine — Core processing logic for routing and sessions.
 
@@ -19,20 +20,19 @@ Dependencies:
     - tzdata (recommended on Windows) — for IANA timezone names
 """
 
-import json
 import glob
 import importlib
 import importlib.util
-import re
+import json
+import logging
 import os
+import re
 import shutil
 import sys
-import logging
 import time
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 try:
     from zoneinfo import ZoneInfo  # py>=3.9

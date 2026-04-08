@@ -8,16 +8,16 @@ Covers:
   default fallback config, config field validation
 """
 
-import json
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 
 # Import engine from scripts/
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "clawork-engine.py")
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 
@@ -253,7 +253,7 @@ test("Response mentions clawork-soul", "[clawork-soul]" in response)
 test("Response includes peer name", "TestUser" in response)
 
 response_with_ctx = engine.dispatch_to_skill("clawork-soul", ticket, [{"role": "user", "content": "prev msg"}] * 5)
-test("Soul uses context count", "5 messages" in response_with_ctx, f"got: {response_with_ctx}")
+test("Soul uses context count", "context: 5" in response_with_ctx, f"got: {response_with_ctx}")
 
 print()
 

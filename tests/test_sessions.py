@@ -11,14 +11,15 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
-import shutil
 
 # Import engine from scripts/
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "clawork-engine.py")
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 

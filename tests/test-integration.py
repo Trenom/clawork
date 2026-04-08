@@ -8,13 +8,11 @@ Requires: ~/claw/ directory structure (run scripts/setup.sh first)
 Run with: python3 tests/test-integration.py
 """
 
+import glob
 import json
 import os
 import sys
-import shutil
-import glob
-import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # --- Setup ---
 
@@ -79,6 +77,7 @@ def create_ticket(ticket_id, channel, peer_id, peer_name, instruction, priority=
 # --- Import engine functions ---
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 
@@ -176,7 +175,7 @@ with open(session_path) as f:
     lines = f.readlines()
 test("Session has 2 entries (user + assistant)", len(lines) == 2, f"got {len(lines)}")
 
-entries = [json.loads(l) for l in lines]
+entries = [json.loads(ln) for ln in lines]
 test("First entry is user", entries[0]["role"] == "user")
 test("Second entry is assistant", entries[1]["role"] == "assistant")
 test("User content matches", entries[0]["content"] == "Hello test!")

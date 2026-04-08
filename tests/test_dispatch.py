@@ -13,16 +13,17 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
-import shutil
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Import engine from scripts/
 ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "clawork-engine.py")
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 
