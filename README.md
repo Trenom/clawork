@@ -1,5 +1,11 @@
 # Clawork — Transform Claude Cowork into an Autonomous Personal Agent
 
+[![Release](https://img.shields.io/github/v/release/Trenom/clawork?include_prereleases&label=release)](https://github.com/Trenom/clawork/releases/latest)
+[![CI](https://github.com/Trenom/clawork/actions/workflows/ci.yml/badge.svg)](https://github.com/Trenom/clawork/actions/workflows/ci.yml)
+[![Docs](https://github.com/Trenom/clawork/actions/workflows/docs.yml/badge.svg)](https://trenom.github.io/clawork/)
+
+Latest release: **[v0.1.0-beta](https://github.com/Trenom/clawork/releases/tag/v0.1.0-beta)** — see the [CHANGELOG](CHANGELOG.md) for details.
+
 **Run Claude natively as a multi-channel autonomous agent without third-party dependencies, ToS violations, or OAuth hacks.**
 
 Clawork is a skills kit and configuration system that transforms Anthropic's Claude Cowork into a fully autonomous personal agent. It ports the proven architecture of [OpenClaw](https://github.com/nicobailey/openclaw) to Cowork's native ecosystem, using only official Anthropic primitives: scheduled tasks, skills, computer use, projects, and connectors.

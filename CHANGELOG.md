@@ -16,9 +16,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Session compaction with automatic summarization
 - Multi-agent coordination
 - Integration test suite
-- CI workflow (pytest + ruff + mypy on PRs)
-- `pyproject.toml` with an honest dependency manifest
-- Real `dispatch_to_skill` implementation (registry / MCP-based)
 
 ### Planned for Phase 3
 
@@ -36,12 +33,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
-## [0.1.0-beta] - 2026-04-05 (unreleased)
+## [0.1.0-beta] - 2026-04-07
 
-> **Note:** This entry was originally tagged as `1.0.0` but no GitHub
-> release has been published and the reliability story is still
-> evolving. It is being tracked as `0.1.0-beta` until a CI pipeline,
-> a real dispatch implementation, and a published release exist.
+> First published beta. CI pipeline is green (pytest + ruff), `dispatch_to_skill`
+> is now registry-based with local/MCP/webhook paths, the package is pip-installable
+> via `pyproject.toml`, and the engine has structured logging, retries, a poison
+> queue, and a JSONL metrics stream. See the release notes on GitHub for the
+> full Phase 2.5 summary.
 
 ### Initial Beta
 
