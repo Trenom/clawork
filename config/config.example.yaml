@@ -12,7 +12,7 @@ agent:
 
 channels:
   whatsapp:
-    enabled: true
+    enabled: false   # Phase 2 beta: feature-flag OFF by default. Flip to true after reviewing clawork-messenger. Tracked: ECH-20.
     method: "browser"                  # "browser" (WhatsApp Web) | "adb" (emulator)
     check_interval: "5m"
     url: "https://web.whatsapp.com"
